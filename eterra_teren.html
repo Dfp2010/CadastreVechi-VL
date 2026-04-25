@@ -657,10 +657,18 @@ async function doLogin() {
       document.getElementById('auth-pass').value = '';
       setStatus('✓ Autentificat — apasă ⟳ Încarcă');
     } else {
-      const msg = data.error || 'Eroare necunoscută';
-      document.getElementById('auth-status').textContent = '❌ ' + msg;
+      // Show detailed attempts for debugging
+      let msg = '❌ ' + (data.error || 'Eroare necunoscută');
+      if (data.attempts && data.attempts.length) {
+        msg += '\n\nDetalii per endpoint:';
+        data.attempts.forEach(a => {
+          msg += `\n[${a.client}] ${a.url}: ${a.error || a.fetchError || a.raw || a.response || '?'} (HTTP ${a.httpStatus||'?'})`;
+        });
+      }
+      document.getElementById('auth-status').textContent = msg;
       document.getElementById('auth-status').style.color = '#e07b00';
-      setStatus('❌ Auth eșuată');
+      document.getElementById('auth-status').style.whiteSpace = 'pre-wrap';
+      setStatus('❌ Auth eșuată — vezi detalii în panou');
     }
   } catch(e) {
     document.getElementById('auth-status').textContent = '❌ Worker inaccesibil: ' + e.message;

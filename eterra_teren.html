@@ -233,6 +233,20 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
       </button>
     </div>
 
+    <div class="sec">
+      <div class="sec-label">🔍 Diagnosticare MapServer</div>
+      <button onclick="discoverLayers()"
+        style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px;">
+        Detectează layere eTerra
+      </button>
+      <div id="disc-sec" style="display:none">
+        <p style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.5">
+          Layere disponibile în MapServer. Identifică ID-urile corecte pentru Intrav/UAT și actualizează CFG.msId în codul sursă.
+        </p>
+        <div id="disc-list" style="font-size:11px;font-family:monospace;line-height:1.8;color:var(--text)"></div>
+      </div>
+    </div>
+
     <div class="sec" id="attrs-sec" style="display:none">
       <div class="sec-label">Atribute entitate selectată</div>
       <pre id="attrs-pre"></pre>
@@ -562,8 +576,36 @@ function addFeature(geom, attrs, layerId) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ETERRA API
+//  MAPSERVER LAYER DISCOVERY
 // ══════════════════════════════════════════════════════════════════════════════
+async function discoverLayers() {
+  showLoad('⏳ Interogare MapServer...');
+  try {
+    const resp = await fetch(`${CFG.eterraBase}?f=json`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    const layers = [...(data.layers||[]), ...(data.tables||[])];
+    if (!layers.length) throw new Error('Niciun layer returnat');
+
+    const list = document.getElementById('disc-list');
+    list.innerHTML = layers.map(l => {
+      // Highlight layers likely relevant
+      const relevant = /parcel|construc|cladiri|limit|intrav|uat|terrain|teren|imobil/i.test(l.name);
+      const style = relevant ? 'color:#2dab6a;font-weight:700' : 'color:var(--text2)';
+      return `<div style="${style}"><span style="color:var(--accent);min-width:28px;display:inline-block">[${l.id}]</span> ${l.name}</div>`;
+    }).join('');
+
+    document.getElementById('disc-sec').style.display = 'block';
+    openPanel();
+    setStatus(`✓ ${layers.length} layere detectate în MapServer`);
+  } catch(e) {
+    setStatus('❌ Detectare layere: ' + e.message);
+  }
+  hideLoad();
+}
+
+
 
 // Determine layer ID from parcel attributes
 function categorize(attrs) {
@@ -697,7 +739,8 @@ async function loadData() {
   document.getElementById('btn-load').disabled = false;
 
   if (errs.length) {
-    setStatus(`${total} entități | ⚠ ${errs.slice(0,2).join(' | ')}${errs.length>2?' ...':''}`);
+    setStatus(`${total} entități | ⚠ ${errs.join(' | ')}`);
+    console.warn('Erori încărcare:', errs);
   } else {
     setStatus(`✓ ${total} entități în raza de ${r}m`);
   }

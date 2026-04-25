@@ -234,16 +234,17 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
     </div>
 
     <div class="sec">
-      <div class="sec-label">🔍 Diagnosticare MapServer</div>
-      <button onclick="discoverLayers()"
-        style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px;">
-        Detectează layere eTerra
+      <div class="sec-label">🔍 Diagnosticare</div>
+      <button onclick="probeLayers()"
+        style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:6px;">
+        Detectează ID-uri layere (0–15)
       </button>
-      <div id="disc-sec" style="display:none">
-        <p style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.5">
-          Layere disponibile în MapServer. Identifică ID-urile corecte pentru Intrav/UAT și actualizează CFG.msId în codul sursă.
-        </p>
-        <div id="disc-list" style="font-size:11px;font-family:monospace;line-height:1.8;color:var(--text)"></div>
+      <button onclick="testRawQuery()"
+        style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;">
+        Test interogare parcelă brut
+      </button>
+      <div id="disc-sec" style="display:none;margin-top:10px">
+        <div id="disc-list" style="font-size:11px;font-family:monospace;line-height:1.9;color:var(--text)"></div>
       </div>
     </div>
 
@@ -290,27 +291,26 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
 const CFG = {
 
   // ─── FlatGeobuf GitHub ──────────────────────────────────────────────────────
-  fgbUrl: 'https://github.com/Dfp2010/CadastreVechi-VL/releases/download/VL_CadastreVechi/VL_Cadastre.Vechi.fgb',
-  // Dacă fișierul e și în repo (nu doar ca release asset), poți folosi:
-  // fgbUrl: 'https://raw.githubusercontent.com/Dfp2010/CadastreVechi-VL/main/VL_Cadastre.Vechi.fgb',
+  // media.githubusercontent.com = servește conținut LFS real + suportă range requests + CORS
+  fgbUrls: [
+    'https://media.githubusercontent.com/media/Dfp2010/CadastreVechi-VL/main/VL_Cadastre.Vechi.fgb',
+    'https://raw.githubusercontent.com/Dfp2010/CadastreVechi-VL/main/VL_Cadastre.Vechi.fgb',
+  ],
 
   // ─── eTerra ArcGIS REST ─────────────────────────────────────────────────────
   eterraBase: 'https://geoportal.ancpi.ro/maps/rest/services/eterra3_publish/MapServer',
 
-  // ID-urile de layer din MapServer
-  // Verifică lista completă la: https://geoportal.ancpi.ro/maps/rest/services/eterra3_publish/MapServer?f=json
+  // ID-urile de layer din MapServer — ajustează după rezultatul "Detectează ID-uri"
   msId: {
-    parcele:    1,   // confirmat din cercetare anterioară
+    parcele:    1,   // confirmat
     constructii:0,   // ⚠ de verificat
     intrav:     2,   // ⚠ de verificat
     uat:        3,   // ⚠ de verificat
   },
 
   // ─── Câmpul de stare parcelă ────────────────────────────────────────────────
-  // Dacă nu merge, apasă pe o parcelă → Atribute → vezi ce câmpuri există
   statusField: 'STARE',
 
-  // Mapare valori câmp → layer-id
   statusMap: {
     'ACTIV':         'TERENURI-ACTIVE',
     'RECEPTIONAT':   'TERENURI-RECEPTIONATE',
@@ -318,7 +318,6 @@ const CFG = {
     'NEINREGISTRAT': 'TERENURI-NEINREGISTRATE',
     'IN_LUCRU':      'TERENURI-IN-LUCRU',
     'PE_CERERE':     'TERENURI-PE-CERERE',
-    // Dacă CADGEN e separat prin TIP + STARE, ajustează în funcția categorize()
   }
 };
 
@@ -576,31 +575,112 @@ function addFeature(geom, attrs, layerId) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  MAPSERVER LAYER DISCOVERY
+//  DIAGNOSTICS
 // ══════════════════════════════════════════════════════════════════════════════
-async function discoverLayers() {
-  showLoad('⏳ Interogare MapServer...');
+
+// Probe layer IDs 0-20 using actual bbox queries (not metadata — metadata needs auth)
+async function probeLayers() {
+  if (!userLat || !userLon) { setStatus('⚠ Localizare GPS necesară mai întâi'); return; }
+  showLoad('⏳ Probez ID-uri 0–20 cu query real...');
+  openPanel();
+  const list = document.getElementById('disc-list');
+  list.innerHTML = '<span style="color:var(--text2)">Se probează (poate dura 15s)...</span>';
+  document.getElementById('disc-sec').style.display = 'block';
+
+  const [cx,cy] = wgs84To3844(userLat, userLon);
+  const r = 500;
+  const geomStr = JSON.stringify({xmin:cx-r,ymin:cy-r,xmax:cx+r,ymax:cy+r,spatialReference:{wkid:3844}});
+  const baseParams = new URLSearchParams({
+    f:'json', where:'1=1',
+    geometry:geomStr, geometryType:'esriGeometryEnvelope',
+    spatialRel:'esriSpatialRelIntersects',
+    inSR:3844, outSR:3844,
+    outFields:'OBJECTID', returnGeometry:false,
+    resultRecordCount:5
+  });
+
+  // Also probe other known ANCPI services
+  const services = [
+    { base: CFG.eterraBase, label: 'eterra3' },
+    { base: 'https://geoportal.ancpi.ro/maps/rest/services/eterra_limite/MapServer', label: 'limite' },
+    { base: 'https://geoportal.ancpi.ro/maps/rest/services/inspire_cp/MapServer', label: 'inspire_cp' },
+  ];
+
+  const results = [];
+
+  for (const svc of services) {
+    for (let id = 0; id <= 20; id++) {
+      try {
+        const resp = await fetch(`${svc.base}/${id}/query?${baseParams}`,
+          { signal: AbortSignal.timeout(4000) });
+        const d = await resp.json();
+        if (!d.error) {
+          const n = (d.features||[]).length;
+          results.push({ svc: svc.label, id, count: n, exceeded: d.exceededTransferLimit||false });
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  hideLoad();
+
+  if (!results.length) {
+    list.innerHTML = '<span style="color:#e07b00">Niciun layer accesibil fără autentificare în niciun serviciu probat.</span>';
+    setStatus('0 layere accesibile');
+    return;
+  }
+
+  list.innerHTML = results.map(l => {
+    const col = l.count > 0 ? '#2dab6a' : 'var(--text2)';
+    const cnt = l.count > 0 ? `<span style="color:var(--ok)"> ← ${l.count} ent${l.exceeded?'+':''}</span>` : '';
+    return `<div><span style="color:#556;font-size:10px">[${l.svc}]</span> `
+         + `<span style="color:var(--accent);display:inline-block;min-width:24px">[${l.id}]</span>`
+         + `<span style="color:${col}">${cnt}</span></div>`;
+  }).join('');
+
+  const withData = results.filter(r => r.count > 0);
+  setStatus(`Probe: ${results.length} layere accesibile, ${withData.length} cu date`);
+}
+
+// Raw query test — shows exact server response for current position
+async function testRawQuery() {
+  if (!userLat || !userLon) { setStatus('⚠ Localizare GPS necesară mai întâi'); return; }
+  showLoad('⏳ Test interogare parcelă...');
+  const [cx,cy] = wgs84To3844(userLat, userLon);
+  const r = 200;
+  const geomStr = JSON.stringify({xmin:cx-r,ymin:cy-r,xmax:cx+r,ymax:cy+r,spatialReference:{wkid:3844}});
+  const params = new URLSearchParams({
+    f:'json', where:'1=1',
+    geometry:geomStr, geometryType:'esriGeometryEnvelope',
+    spatialRel:'esriSpatialRelIntersects',
+    inSR:3844, outSR:3844,
+    outFields:'OBJECTID,INSPIRE_ID,STARE,TIP,CATEGORIE,AREA',
+    returnGeometry:false,
+    resultRecordCount:50
+  });
   try {
-    const resp = await fetch(`${CFG.eterraBase}?f=json`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const resp = await fetch(`${CFG.eterraBase}/${CFG.msId.parcele}/query?${params}`);
     const data = await resp.json();
-
-    const layers = [...(data.layers||[]), ...(data.tables||[])];
-    if (!layers.length) throw new Error('Niciun layer returnat');
-
     const list = document.getElementById('disc-list');
-    list.innerHTML = layers.map(l => {
-      // Highlight layers likely relevant
-      const relevant = /parcel|construc|cladiri|limit|intrav|uat|terrain|teren|imobil/i.test(l.name);
-      const style = relevant ? 'color:#2dab6a;font-weight:700' : 'color:var(--text2)';
-      return `<div style="${style}"><span style="color:var(--accent);min-width:28px;display:inline-block">[${l.id}]</span> ${l.name}</div>`;
-    }).join('');
-
+    const feats = data.features || [];
+    if (feats.length === 0) {
+      list.innerHTML = `<span style="color:#e07b00">0 parcele returnate în 200m. `
+        + `exceededTransferLimit=${data.exceededTransferLimit||false}.<br>`
+        + `Error: ${data.error ? JSON.stringify(data.error) : 'niciuna'}</span>`;
+    } else {
+      list.innerHTML = `<div style="color:var(--ok);margin-bottom:6px">✓ ${feats.length} parcele returnate</div>`
+        + feats.map(f => {
+          const a = f.attributes;
+          return `<div style="border-bottom:1px solid var(--border);padding:3px 0">`
+            + Object.entries(a).filter(([,v])=>v!==null).map(([k,v])=>`<b>${k}</b>=${v}`).join(' | ')
+            + `</div>`;
+        }).join('');
+    }
     document.getElementById('disc-sec').style.display = 'block';
     openPanel();
-    setStatus(`✓ ${layers.length} layere detectate în MapServer`);
+    setStatus(`Test parcelă: ${feats.length} rezultate`);
   } catch(e) {
-    setStatus('❌ Detectare layere: ' + e.message);
+    setStatus('❌ Test eșuat: ' + e.message);
   }
   hideLoad();
 }
@@ -665,15 +745,23 @@ async function queryLayer(msLayerId, bbox, defaultLayerId) {
 // ══════════════════════════════════════════════════════════════════════════════
 async function loadFgb(bbox) {
   const rect = { minX:bbox.xmin, minY:bbox.ymin, maxX:bbox.xmax, maxY:bbox.ymax };
-  let count = 0;
-  const iter = flatgeobuf.deserialize(CFG.fgbUrl, rect);
-  for await (const feat of iter) {
-    if (feat.geometry) {
-      addFeature(feat.geometry, feat.properties || {}, 'TERENURI-VECHI');
-      count++;
+  let lastErr = null;
+  for (const url of CFG.fgbUrls) {
+    try {
+      let count = 0;
+      const iter = flatgeobuf.deserialize(url, rect);
+      for await (const feat of iter) {
+        if (feat.geometry) {
+          addFeature(feat.geometry, feat.properties || {}, 'TERENURI-VECHI');
+          count++;
+        }
+      }
+      return count;
+    } catch(e) {
+      lastErr = `${url.includes('raw.') ? 'raw' : 'release'}:${e.message}`;
     }
   }
-  return count;
+  throw new Error(lastErr || 'toate URL-urile au eșuat');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -702,47 +790,55 @@ async function loadData() {
   const bbox = { xmin:cx-r, ymin:cy-r, xmax:cx+r, ymax:cy+r };
 
   const errs = [];
+  const counts = { parcele:0, cladiri:0, intrav:0, uat:0, fgb:0 };
   let total = 0;
 
   // ── Parcele ──────────────────────────────────────────────────────────────
   try {
     showLoad('⏳ Parcele eTerra...');
-    total += await queryLayer(CFG.msId.parcele, bbox, 'auto');
-  } catch(e) { errs.push('Parcele(' + e.message + ')'); }
+    counts.parcele = await queryLayer(CFG.msId.parcele, bbox, 'auto');
+    total += counts.parcele;
+  } catch(e) { errs.push('Parc(' + e.message + ')'); }
 
   // ── Construcții ──────────────────────────────────────────────────────────
   try {
     showLoad('⏳ Clădiri eTerra...');
-    total += await queryLayer(CFG.msId.constructii, bbox, 'CLADIRI-ACTIVE');
-  } catch(e) { errs.push('Clădiri(' + e.message + ')'); }
+    counts.cladiri = await queryLayer(CFG.msId.constructii, bbox, 'CLADIRI-ACTIVE');
+    total += counts.cladiri;
+  } catch(e) { errs.push('Clăd(' + e.message + ')'); }
 
   // ── Limite Intrav ────────────────────────────────────────────────────────
   try {
     showLoad('⏳ Limite Intrav...');
-    total += await queryLayer(CFG.msId.intrav, bbox, 'LIMITE-INTRAV');
+    counts.intrav = await queryLayer(CFG.msId.intrav, bbox, 'LIMITE-INTRAV');
+    total += counts.intrav;
   } catch(e) { errs.push('Intrav(' + e.message + ')'); }
 
   // ── Limite UAT ───────────────────────────────────────────────────────────
   try {
     showLoad('⏳ Limite UAT...');
-    total += await queryLayer(CFG.msId.uat, bbox, 'LIMITE-UAT');
+    counts.uat = await queryLayer(CFG.msId.uat, bbox, 'LIMITE-UAT');
+    total += counts.uat;
   } catch(e) { errs.push('UAT(' + e.message + ')'); }
 
   // ── FlatGeobuf (GitHub) ──────────────────────────────────────────────────
   try {
     showLoad('⏳ Cadastre Vechi (FGB)...');
-    total += await loadFgb(bbox);
+    counts.fgb = await loadFgb(bbox);
+    total += counts.fgb;
   } catch(e) { errs.push('FGB(' + e.message + ')'); }
 
   hideLoad();
   loading = false;
   document.getElementById('btn-load').disabled = false;
 
+  // Detailed per-source summary
+  const summary = `P=${counts.parcele} C=${counts.cladiri} I=${counts.intrav} U=${counts.uat} V=${counts.fgb}`;
   if (errs.length) {
-    setStatus(`${total} entități | ⚠ ${errs.join(' | ')}`);
-    console.warn('Erori încărcare:', errs);
+    setStatus(`${total} ent [${summary}] ⚠ ${errs.join(' ')}`);
+    console.warn('Erori:', errs);
   } else {
-    setStatus(`✓ ${total} entități în raza de ${r}m`);
+    setStatus(`✓ ${total} entități [${summary}] în ${r}m`);
   }
 }
 

@@ -191,6 +191,25 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
   </div>
   <div id="pb">
 
+    <div class="sec" id="auth-sec">
+      <div class="sec-label">🔐 Autentificare eTerra</div>
+      <p id="auth-status" style="font-size:11px;margin-bottom:8px;line-height:1.5;color:var(--warn)">
+        ⚠ Neautentificat — serverul returnează maxim 1 entitate per layer. Introdu credențialele contului eTerra.
+      </p>
+      <div style="margin-bottom:6px">
+        <input type="text" id="auth-user" placeholder="Utilizator eTerra"
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:14px;outline:none;box-sizing:border-box;">
+      </div>
+      <div style="margin-bottom:8px">
+        <input type="password" id="auth-pass" placeholder="Parolă"
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:14px;outline:none;box-sizing:border-box;">
+      </div>
+      <button onclick="doLogin()"
+        style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;">
+        Conectare
+      </button>
+    </div>
+
     <div class="sec">
       <div class="sec-label">Raza de căutare</div>
       <div class="field-row">
@@ -575,8 +594,52 @@ function addFeature(geom, attrs, layerId) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  DIAGNOSTICS
+//  AUTHENTICATION
 // ══════════════════════════════════════════════════════════════════════════════
+let authToken = null;
+
+async function doLogin() {
+  const user = document.getElementById('auth-user').value.trim();
+  const pass = document.getElementById('auth-pass').value;
+  if (!user || !pass) { setStatus('⚠ Completează utilizator și parolă'); return; }
+
+  showLoad('⏳ Autentificare...');
+
+  // Try both portal endpoints
+  const endpoints = [
+    'https://geoportal.ancpi.ro/portal/sharing/rest/generateToken',
+    'https://geoportal.ancpi.ro/arcgis/tokens/generateToken',
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const body = new URLSearchParams({
+        username: user, password: pass,
+        client: 'requestip', expiration: 120, f: 'json'
+      });
+      const resp = await fetch(url, { method:'POST', body });
+      const data = await resp.json();
+      if (data.token) {
+        authToken = data.token;
+        document.getElementById('auth-status').textContent = `✓ Autentificat ca ${user} (token valid ${data.expires ? Math.round((data.expires - Date.now())/60000) + 'min' : ''})`;
+        document.getElementById('auth-status').style.color = 'var(--ok)';
+        document.getElementById('auth-user').value = '';
+        document.getElementById('auth-pass').value = '';
+        setStatus('✓ Autentificat — apasă ⟳ Încarcă');
+        hideLoad();
+        return;
+      }
+      if (data.error) {
+        setStatus('❌ ' + (data.error.message || 'Eroare autentificare'));
+      }
+    } catch(e) { /* try next */ }
+  }
+
+  hideLoad();
+  setStatus('❌ Autentificare eșuată — verifică credențialele');
+}
+
+
 
 // Probe layer IDs 0-20 using actual bbox queries (not metadata — metadata needs auth)
 async function probeLayers() {
@@ -596,7 +659,8 @@ async function probeLayers() {
     spatialRel:'esriSpatialRelIntersects',
     inSR:3844, outSR:3844,
     outFields:'OBJECTID', returnGeometry:false,
-    resultRecordCount:5
+    resultRecordCount:5,
+    ...(authToken ? { token: authToken } : {})
   });
 
   // Also probe other known ANCPI services
@@ -656,7 +720,8 @@ async function testRawQuery() {
     inSR:3844, outSR:3844,
     outFields:'OBJECTID,INSPIRE_ID,STARE,TIP,CATEGORIE,AREA',
     returnGeometry:false,
-    resultRecordCount:50
+    resultRecordCount:50,
+    ...(authToken ? { token: authToken } : {})
   });
   try {
     const resp = await fetch(`${CFG.eterraBase}/${CFG.msId.parcele}/query?${params}`);
@@ -721,7 +786,8 @@ async function queryLayer(msLayerId, bbox, defaultLayerId) {
     inSR:3844, outSR:3844,
     outFields:'*',
     returnGeometry:true,
-    resultRecordCount:2000
+    resultRecordCount:2000,
+    ...(authToken ? { token: authToken } : {})
   });
 
   const resp = await fetch(`${CFG.eterraBase}/${msLayerId}/query?${params}`);

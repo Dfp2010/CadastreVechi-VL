@@ -191,14 +191,31 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
   </div>
   <div id="pb">
 
-    <div class="sec" id="auth-sec" style="background:rgba(224,123,0,.08);border-color:rgba(224,123,0,.3)">
-      <div class="sec-label">ℹ️ Despre datele eTerra</div>
-      <p style="font-size:11px;color:var(--text2);line-height:1.6">
-        Portalul ANCPI folosește autentificare federată — accesul API direct nu este posibil din browser.<br><br>
-        <b style="color:var(--text)">eTerra conține doar parcele înregistrate sistematic</b> (campanii ANCPI recente). 
-        Intravilanul vechi din Rm. Vâlcea are puține parcele în eTerra — datele principale sunt în fișierul FGB (Cadastre Vechi).<br><br>
-        <span style="color:var(--ok)">✓ Soluție: adaugă fișierul FGB în repo prin Git LFS.</span>
+    <div class="sec" id="auth-sec">
+      <div class="sec-label">🔐 Autentificare eTerra</div>
+      <p id="auth-status" style="font-size:11px;margin-bottom:8px;line-height:1.5;color:var(--warn)">
+        ⚠ Necesită Cloudflare Worker configurat. Fără worker: 1 entitate/layer (public limitat).
       </p>
+      <div id="auth-form">
+        <div style="margin-bottom:6px">
+          <input type="text" id="auth-user" placeholder="Email eTerra (ex: name@email.com)"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;box-sizing:border-box;">
+        </div>
+        <div style="margin-bottom:8px;position:relative">
+          <input type="password" id="auth-pass" placeholder="Parolă"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 36px 8px 10px;font-size:13px;outline:none;box-sizing:border-box;">
+          <button onclick="togglePass()" tabindex="-1"
+            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text2);font-size:16px;cursor:pointer;padding:2px 4px;line-height:1">👁</button>
+        </div>
+        <button onclick="doLogin()"
+          style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;">
+          Conectare prin Worker
+        </button>
+        <p style="font-size:10px;color:var(--text2);margin-top:8px;line-height:1.5">
+          Necesită <b style="color:var(--text)">CFG.workerUrl</b> setat în cod.<br>
+          Vezi <code style="color:var(--accent)">eterra-worker.js</code> pentru setup Cloudflare.
+        </p>
+      </div>
     </div>
 
     <div class="sec">
@@ -300,7 +317,11 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
 // ══════════════════════════════════════════════════════════════════════════════
 const CFG = {
 
-  // ─── FlatGeobuf GitHub ──────────────────────────────────────────────────────
+  // ─── Cloudflare Worker proxy (opțional, pentru autentificare completă) ──────
+  // Lasă gol dacă nu ai worker. Cu worker: date complete. Fără: 1 entitate/layer.
+  // Instrucțiuni setup: vezi eterra-worker.js din repo
+  workerUrl: '',  // ex: 'https://eterra-proxy.username.workers.dev'
+
   // media.githubusercontent.com = servește conținut LFS real + suportă range requests + CORS
   fgbUrls: [
     'https://media.githubusercontent.com/media/Dfp2010/CadastreVechi-VL/main/VL_Cadastre.Vechi.fgb',
@@ -607,66 +628,45 @@ function togglePass() {
 }
 
 async function doLogin() {
+  if (!CFG.workerUrl) {
+    document.getElementById('auth-status').textContent = '❌ CFG.workerUrl nu e setat. Urmează instrucțiunile din eterra-worker.js.';
+    document.getElementById('auth-status').style.color = '#e07b00';
+    return;
+  }
   const user = document.getElementById('auth-user').value.trim();
   const pass = document.getElementById('auth-pass').value;
-  if (!user || !pass) { setStatus('⚠ Completează utilizator și parolă'); return; }
+  if (!user || !pass) { setStatus('⚠ Completează email și parolă'); return; }
 
-  showLoad('⏳ Autentificare...');
+  showLoad('⏳ Autentificare prin Worker...');
   document.getElementById('auth-status').textContent = '⏳ Se conectează...';
   document.getElementById('auth-status').style.color = 'var(--text2)';
 
-  const endpoints = [
-    'https://geoportal.ancpi.ro/portal/sharing/rest/generateToken',
-    'https://geoportal.ancpi.ro/portal/sharing/generateToken',
-    'https://geoportal.ancpi.ro/arcgis/tokens/generateToken',
-  ];
-
-  for (const url of endpoints) {
-    // Try with referer client (more permissive for browser-based apps)
-    for (const clientType of ['referer', 'requestip']) {
-      try {
-        const bodyObj = {
-          username: user, password: pass,
-          expiration: 120, f: 'json'
-        };
-        if (clientType === 'referer') {
-          bodyObj.client = 'referer';
-          bodyObj.referer = window.location.origin || 'https://dfp2010.github.io';
-        } else {
-          bodyObj.client = 'requestip';
-        }
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams(bodyObj)
-        });
-        const data = await resp.json();
-        if (data.token) {
-          authToken = data.token;
-          const mins = data.expires ? Math.round((data.expires - Date.now()) / 60000) : '?';
-          document.getElementById('auth-status').textContent = `✓ Autentificat (token ${mins}min)`;
-          document.getElementById('auth-status').style.color = 'var(--ok)';
-          document.getElementById('auth-user').value = '';
-          document.getElementById('auth-pass').value = '';
-          setStatus('✓ Autentificat — apasă ⟳ Încarcă');
-          hideLoad();
-          return;
-        }
-        if (data.error) {
-          // Show actual server error to help debug
-          const msg = data.error.message || JSON.stringify(data.error);
-          document.getElementById('auth-status').textContent = `❌ [${url.split('/')[4]}/${clientType}]: ${msg}`;
-          document.getElementById('auth-status').style.color = '#e07b00';
-          console.warn('Auth attempt failed:', url, clientType, data.error);
-        }
-      } catch(e) {
-        console.warn('Auth fetch error:', url, e.message);
-      }
+  try {
+    const resp = await fetch(`${CFG.workerUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass }),
+    });
+    const data = await resp.json();
+    if (data.token) {
+      authToken = data.token;
+      const mins = data.expires ? Math.round((data.expires - Date.now()) / 60000) : '?';
+      document.getElementById('auth-status').textContent = `✓ Autentificat (token ${mins}min)`;
+      document.getElementById('auth-status').style.color = 'var(--ok)';
+      document.getElementById('auth-user').value = '';
+      document.getElementById('auth-pass').value = '';
+      setStatus('✓ Autentificat — apasă ⟳ Încarcă');
+    } else {
+      const msg = data.error || 'Eroare necunoscută';
+      document.getElementById('auth-status').textContent = '❌ ' + msg;
+      document.getElementById('auth-status').style.color = '#e07b00';
+      setStatus('❌ Auth eșuată');
     }
+  } catch(e) {
+    document.getElementById('auth-status').textContent = '❌ Worker inaccesibil: ' + e.message;
+    document.getElementById('auth-status').style.color = '#e07b00';
   }
-
   hideLoad();
-  setStatus('❌ Autentificare eșuată — vezi mesajul din panou');
 }
 
 

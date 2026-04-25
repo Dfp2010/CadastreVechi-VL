@@ -228,6 +228,15 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
 
     <div class="sec">
       <div class="sec-label">Straturi vizibile</div>
+      <!-- WMS overlay row -->
+      <div class="lrow">
+        <div class="ldot" style="background:linear-gradient(135deg,#0066FF,#22CC00,#FF8800)"></div>
+        <span class="lname">eTerra WMS (toate parcelele)</span>
+        <div class="ltog on wms-tog" onclick="toggleWms(!wmsVisible)"></div>
+      </div>
+      <div style="font-size:10px;color:var(--text2);padding:0 4px 6px;line-height:1.4">
+        Imagine tile — vizual complet, fără selecție
+      </div>
       <div id="llist"></div>
     </div>
 
@@ -448,7 +457,28 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 
 L.control.zoom({ position:'bottomright' }).addTo(map);
 
-// One FeatureGroup per layer
+// ── WMS overlay (toate parcelele vizibile, fără auth) ──
+const WMS_URL = 'https://geoportal.ancpi.ro/maps/rest/services/eterra3_publish/MapServer/WMSServer';
+
+const wmsLayer = L.tileLayer.wms(WMS_URL, {
+  layers: '1',          // parcele
+  format: 'image/png',
+  transparent: true,
+  version: '1.3.0',
+  opacity: 0.6,
+  attribution: '© ANCPI eTerra',
+  maxZoom: 22,
+});
+wmsLayer.addTo(map);
+
+// WMS toggle state
+let wmsVisible = true;
+
+function toggleWms(on) {
+  wmsVisible = on;
+  on ? wmsLayer.addTo(map) : map.removeLayer(wmsLayer);
+  document.querySelector('.wms-tog').classList.toggle('on', on);
+}
 const groups = {};
 LAYERS.forEach(l => { groups[l.id] = L.featureGroup().addTo(map); });
 

@@ -621,6 +621,7 @@ function addFeature(geom, attrs, layerId) {
 //  AUTHENTICATION
 // ══════════════════════════════════════════════════════════════════════════════
 let authToken = null;
+let authTokenType = 'arcgis'; // 'arcgis' | 'session' | 'openam'
 
 function togglePass() {
   const inp = document.getElementById('auth-pass');
@@ -650,11 +651,13 @@ async function doLogin() {
     const data = await resp.json();
     if (data.token) {
       authToken = data.token;
+      authTokenType = data.tokenType || 'arcgis';
       const mins = data.expires ? Math.round((data.expires - Date.now()) / 60000) : '?';
-      document.getElementById('auth-status').textContent = `✓ Autentificat (token ${mins}min)`;
+      document.getElementById('auth-status').textContent = `✓ Autentificat [${authTokenType}] (${mins}min)`;
       document.getElementById('auth-status').style.color = 'var(--ok)';
       document.getElementById('auth-user').value = '';
       document.getElementById('auth-pass').value = '';
+      if (data.debug) console.log('Auth debug:', data.debug);
       setStatus('✓ Autentificat — apasă ⟳ Încarcă');
     } else {
       // Show detailed attempts for debugging
@@ -828,19 +831,40 @@ async function queryLayer(msLayerId, bbox, defaultLayerId) {
     spatialReference:{ wkid:3844 }
   });
 
-  const params = new URLSearchParams({
-    f:'json', where:'1=1',
-    geometry:geomStr,
-    geometryType:'esriGeometryEnvelope',
-    spatialRel:'esriSpatialRelIntersects',
-    inSR:3844, outSR:3844,
-    outFields:'*',
-    returnGeometry:true,
-    resultRecordCount:2000,
-    ...(authToken ? { token: authToken } : {})
-  });
+  // Use worker proxy if configured (handles auth cookies)
+  const useWorker = CFG.workerUrl && authToken;
+  let fetchUrl, params;
 
-  const resp = await fetch(`${CFG.eterraBase}/${msLayerId}/query?${params}`);
+  if (useWorker) {
+    params = new URLSearchParams({
+      f:'json', where:'1=1',
+      geometry:geomStr,
+      geometryType:'esriGeometryEnvelope',
+      spatialRel:'esriSpatialRelIntersects',
+      inSR:3844, outSR:3844,
+      outFields:'*',
+      returnGeometry:true,
+      resultRecordCount:2000,
+      _token: authToken,
+      _ttype: authTokenType,
+    });
+    fetchUrl = `${CFG.workerUrl}/query/${msLayerId}?${params}`;
+  } else {
+    params = new URLSearchParams({
+      f:'json', where:'1=1',
+      geometry:geomStr,
+      geometryType:'esriGeometryEnvelope',
+      spatialRel:'esriSpatialRelIntersects',
+      inSR:3844, outSR:3844,
+      outFields:'*',
+      returnGeometry:true,
+      resultRecordCount:2000,
+      ...(authToken && authTokenType === 'arcgis' ? { token: authToken } : {})
+    });
+    fetchUrl = `${CFG.eterraBase}/${msLayerId}/query?${params}`;
+  }
+
+  const resp = await fetch(fetchUrl);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
   if (data.error) throw new Error(`[eTerra] ${data.error.message}`);

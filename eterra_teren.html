@@ -718,7 +718,7 @@ async function testRawQuery() {
     geometry:geomStr, geometryType:'esriGeometryEnvelope',
     spatialRel:'esriSpatialRelIntersects',
     inSR:3844, outSR:3844,
-    outFields:'OBJECTID,INSPIRE_ID,STARE,TIP,CATEGORIE,AREA',
+    outFields:'*',
     returnGeometry:false,
     resultRecordCount:50,
     ...(authToken ? { token: authToken } : {})

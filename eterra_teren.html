@@ -251,6 +251,7 @@ html,body{ height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',sy
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const CFG = {
   fgbUrls: [
+    'https://media.githubusercontent.com/media/Dfp2010/CadastreVechi-VL/VL_CadastreVechi/VL_Cadastre.Vechi.fgb',
     'https://media.githubusercontent.com/media/Dfp2010/CadastreVechi-VL/main/VL_Cadastre.Vechi.fgb',
     'https://raw.githubusercontent.com/Dfp2010/CadastreVechi-VL/main/VL_Cadastre.Vechi.fgb',
   ],
@@ -296,44 +297,15 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 
 L.control.zoom({position:'bottomright'}).addTo(map);
 
-// ── WMS / TILE LAYER ──────────────────────────────────────────────────────────
-// ArcGIS MapServer export — funcționează fără autentificare ca imagine dinamică
+// ── WMS LAYER prin worker (adaugă Referer corect) ────────────────────────────
+const WORKER = 'https://eterra-worker.dobriflor-proj.workers.dev';
 const ARCGIS_BASE = 'https://geoportal.ancpi.ro/maps/rest/services/eterra3_publish/MapServer';
 
-// Custom tile layer folosind ArcGIS export endpoint
-const EterraLayer = L.GridLayer.extend({
-  createTile(coords, done) {
-    const img = document.createElement('img');
-    img.alt = '';
-    const tileBounds = this._tileCoordsToBounds(coords);
-    const sw = tileBounds.getSouthWest();
-    const ne = tileBounds.getNorthEast();
-    const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
-    const params = new URLSearchParams({
-      bbox: bbox,
-      bboxSR: '4326',
-      layers: 'show:0,1,2,3',
-      size: '256,256',
-      imageSR: '4326',
-      format: 'png32',
-      transparent: 'true',
-      f: 'image',
-    });
-    img.src = `${ARCGIS_BASE}/export?${params}`;
-    img.onload  = () => done(null, img);
-    img.onerror = () => done(null, img); // tile gol = ok
-    return img;
-  }
-});
-
-const wmsLayer = new EterraLayer({ opacity: 0.75, maxZoom: 22, tileSize: 256 }).addTo(map);
-
-// Fallback WMS standard
-const wmsLayerFallback = L.tileLayer.wms(
-  'https://geoportal.ancpi.ro/maps/rest/services/eterra3_publish/MapServer/WMSServer', {
-  layers: '0,1,2,3', format:'image/png', transparent:true,
-  version:'1.3.0', opacity:0.75, maxZoom:22,
-});
+const wmsLayer = L.tileLayer(
+  WORKER + '/map-tile?z={z}&x={x}&y={y}', {
+  opacity: 0.75, maxZoom: 22, tileSize: 256,
+  attribution: '© ANCPI eTerra',
+}).addTo(map);
 
 fgbGroup.addTo(map);
 

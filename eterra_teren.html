@@ -191,26 +191,14 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
   </div>
   <div id="pb">
 
-    <div class="sec" id="auth-sec">
-      <div class="sec-label">🔐 Autentificare eTerra</div>
-      <p id="auth-status" style="font-size:11px;margin-bottom:8px;line-height:1.5;color:var(--warn)">
-        ⚠ Neautentificat — serverul returnează maxim 1 entitate per layer. Introdu credențialele contului eTerra.
+    <div class="sec" id="auth-sec" style="background:rgba(224,123,0,.08);border-color:rgba(224,123,0,.3)">
+      <div class="sec-label">ℹ️ Despre datele eTerra</div>
+      <p style="font-size:11px;color:var(--text2);line-height:1.6">
+        Portalul ANCPI folosește autentificare federată — accesul API direct nu este posibil din browser.<br><br>
+        <b style="color:var(--text)">eTerra conține doar parcele înregistrate sistematic</b> (campanii ANCPI recente). 
+        Intravilanul vechi din Rm. Vâlcea are puține parcele în eTerra — datele principale sunt în fișierul FGB (Cadastre Vechi).<br><br>
+        <span style="color:var(--ok)">✓ Soluție: adaugă fișierul FGB în repo prin Git LFS.</span>
       </p>
-      <div style="margin-bottom:6px">
-        <input type="text" id="auth-user" placeholder="Utilizator eTerra"
-          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:14px;outline:none;box-sizing:border-box;">
-      </div>
-      <div style="margin-bottom:8px;position:relative">
-        <input type="password" id="auth-pass" placeholder="Parolă"
-          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 36px 8px 10px;font-size:14px;outline:none;box-sizing:border-box;">
-        <button onclick="togglePass()" tabindex="-1"
-          style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text2);font-size:16px;cursor:pointer;padding:2px 4px;line-height:1"
-          id="btn-eye">👁</button>
-      </div>
-      <button onclick="doLogin()"
-        style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;">
-        Conectare
-      </button>
     </div>
 
     <div class="sec">
@@ -259,11 +247,11 @@ html, body { height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',
       <div class="sec-label">🔍 Diagnosticare</div>
       <button onclick="probeLayers()"
         style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:6px;">
-        Detectează ID-uri layere (0–15)
+        Detectează ID-uri layere (0–20)
       </button>
       <button onclick="testRawQuery()"
-        style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;">
-        Test interogare parcelă brut
+        style="width:100%;padding:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:6px;">
+        Test interogare parcelă (câmpuri + count)
       </button>
       <div id="disc-sec" style="display:none;margin-top:10px">
         <div id="disc-list" style="font-size:11px;font-family:monospace;line-height:1.9;color:var(--text)"></div>
@@ -748,44 +736,46 @@ async function probeLayers() {
   setStatus(`Probe: ${results.length} layere accesibile, ${withData.length} cu date`);
 }
 
-// Raw query test — shows exact server response for current position
 async function testRawQuery() {
   if (!userLat || !userLon) { setStatus('⚠ Localizare GPS necesară mai întâi'); return; }
   showLoad('⏳ Test interogare parcelă...');
   const [cx,cy] = wgs84To3844(userLat, userLon);
   const r = 200;
   const geomStr = JSON.stringify({xmin:cx-r,ymin:cy-r,xmax:cx+r,ymax:cy+r,spatialReference:{wkid:3844}});
-  const params = new URLSearchParams({
+  const baseQ = {
     f:'json', where:'1=1',
     geometry:geomStr, geometryType:'esriGeometryEnvelope',
     spatialRel:'esriSpatialRelIntersects',
     inSR:3844, outSR:3844,
-    outFields:'*',
-    returnGeometry:false,
-    resultRecordCount:50,
-    ...(authToken ? { token: authToken } : {})
-  });
+  };
+
   try {
-    const resp = await fetch(`${CFG.eterraBase}/${CFG.msId.parcele}/query?${params}`);
+    // First: get actual count
+    const countParams = new URLSearchParams({ ...baseQ, returnCountOnly:true });
+    const countResp = await fetch(`${CFG.eterraBase}/${CFG.msId.parcele}/query?${countParams}`);
+    const countData = await countResp.json();
+    const totalCount = countData.count ?? '?';
+
+    // Then: get actual features
+    const featParams = new URLSearchParams({ ...baseQ, outFields:'*', returnGeometry:false, resultRecordCount:50 });
+    const resp = await fetch(`${CFG.eterraBase}/${CFG.msId.parcele}/query?${featParams}`);
     const data = await resp.json();
     const list = document.getElementById('disc-list');
     const feats = data.features || [];
-    if (feats.length === 0) {
-      list.innerHTML = `<span style="color:#e07b00">0 parcele returnate în 200m. `
-        + `exceededTransferLimit=${data.exceededTransferLimit||false}.<br>`
-        + `Error: ${data.error ? JSON.stringify(data.error) : 'niciuna'}</span>`;
-    } else {
-      list.innerHTML = `<div style="color:var(--ok);margin-bottom:6px">✓ ${feats.length} parcele returnate</div>`
-        + feats.map(f => {
-          const a = f.attributes;
-          return `<div style="border-bottom:1px solid var(--border);padding:3px 0">`
-            + Object.entries(a).filter(([,v])=>v!==null).map(([k,v])=>`<b>${k}</b>=${v}`).join(' | ')
-            + `</div>`;
-        }).join('');
-    }
+
+    list.innerHTML = `<div style="color:var(--ok);margin-bottom:6px">Count real pe server: <b>${totalCount}</b> | Returnate: ${feats.length}</div>`
+      + (feats.length === 0
+        ? `<span style="color:#e07b00">Error: ${data.error ? JSON.stringify(data.error) : 'niciuna'}</span>`
+        : feats.slice(0,3).map(f => {
+            const a = f.attributes;
+            return `<div style="border-bottom:1px solid var(--border);padding:3px 0;font-size:10px">`
+              + Object.entries(a).filter(([,v])=>v!==null).map(([k,v])=>`<b>${k}</b>=${v}`).join(' | ')
+              + `</div>`;
+          }).join('') + (feats.length > 3 ? `<div style="color:var(--text2)">... și ${feats.length-3} mai multe</div>` : '')
+      );
     document.getElementById('disc-sec').style.display = 'block';
     openPanel();
-    setStatus(`Test parcelă: ${feats.length} rezultate`);
+    setStatus(`Count real: ${totalCount} parcele în 200m | Returnate: ${feats.length}`);
   } catch(e) {
     setStatus('❌ Test eșuat: ' + e.message);
   }

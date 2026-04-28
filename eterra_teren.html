@@ -224,6 +224,17 @@ html,body{ height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',sy
       <pre id="attrs-pre"></pre>
     </div>
 
+    <div class="sec" id="dl-sec" style="display:none">
+      <div class="sec-label">📥 Descărcare DXF</div>
+      <a id="dl-link" href="#"
+        style="display:block;padding:12px;background:var(--ok);color:#fff;border-radius:9px;
+               text-align:center;font-size:13px;font-weight:700;text-decoration:none;word-break:break-all;">
+      </a>
+      <p style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.4">
+        Pe telefon: apasă lung → „Descarcă link"
+      </p>
+    </div>
+
     <div class="sec">
       <div class="sec-label">Corecție proiecție</div>
       <p style="font-size:11px;color:var(--text2);line-height:1.5;margin-bottom:8px">
@@ -507,21 +518,22 @@ function buildDxf(feats) {
 
 function downloadDxf(text, name) {
   if (!text) { setStatus('⚠ Nimic de exportat'); return; }
-  try {
-    // Method 1: Blob URL (desktop + Android Chrome)
-    const blob = new Blob([text], {type:'application/octet-stream'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = name;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
-    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
-  } catch(e) {
-    // Method 2: data URI fallback
-    const uri = 'data:application/octet-stream;charset=utf-8,' + encodeURIComponent(text);
-    window.open(uri, '_blank');
-  }
+
+  const blob = new Blob([text], {type:'application/octet-stream'});
+  const url  = URL.createObjectURL(blob);
+
+  // Afișează link vizibil în panou — pe Android tap-ul direct funcționează
+  const sec = document.getElementById('dl-sec');
+  const lnk = document.getElementById('dl-link');
+  lnk.href     = url;
+  lnk.download = name;
+  lnk.textContent = '⬇ Apasă aici pentru ' + name;
+  sec.style.display = 'block';
+  openPanel();
+
+  // Curăță URL-ul blob după 5 minute
+  setTimeout(()=> URL.revokeObjectURL(url), 300000);
+  setStatus('✓ Fișier pregătit — apasă linkul din panou');
 }
 function exportSelected() {
   const feats=allFeats.filter(f=>sel.has(f.uid));

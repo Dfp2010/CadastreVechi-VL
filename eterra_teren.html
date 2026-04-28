@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>eTerra Teren</title>
+<title>Cadastre Vechi</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <style>
 :root {
@@ -130,6 +130,13 @@ html,body{ height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',sy
   white-space:pre-wrap; max-height:180px; overflow-y:auto; line-height:1.5;
 }
 
+/* Map switcher */
+.mapbtn{
+  flex:1; padding:7px 4px; border:1px solid var(--border); border-radius:8px;
+  background:var(--bg3); color:var(--text2); font-size:12px; cursor:pointer;
+}
+.mapbtn.active{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+
 /* Leaflet popup */
 .leaflet-popup-content-wrapper{
   background:var(--bg1); color:var(--text); border:1px solid var(--border);
@@ -153,7 +160,7 @@ html,body{ height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',sy
 
 <div id="panel">
   <div id="ph">
-    <h2>🗺 eTerra Teren</h2>
+    <h2>🗺 Cadastre Vechi</h2>
     <button id="btn-close" onclick="closePanel()">✕</button>
   </div>
   <div id="pb">
@@ -167,18 +174,16 @@ html,body{ height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',sy
     </div>
 
     <div class="sec">
-      <div class="sec-label">Straturi vizibile</div>
-
-      <!-- WMS geoportal -->
-      <div class="lrow">
-        <div class="ldot" style="background:linear-gradient(135deg,#0066FF 33%,#22CC00 66%,#FF8800)"></div>
-        <span class="lname">Parcele eTerra (geoportal)</span>
-        <div class="ltog on" id="tog-wms" onclick="toggleWms()"></div>
+      <div class="sec-label">Hartă de bază</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="mapbtn active" data-map="carto" onclick="setBaseMap('carto')">Stradă</button>
+        <button class="mapbtn" data-map="sat" onclick="setBaseMap('sat')">Satelit</button>
+        <button class="mapbtn" data-map="osm" onclick="setBaseMap('osm')">OSM</button>
       </div>
-      <p style="font-size:10px;color:var(--text2);padding:0 4px 8px;line-height:1.4">
-        Tiles cu toate parcelele — vizual, fără selecție
-      </p>
+    </div>
 
+    <div class="sec">
+      <div class="sec-label">Straturi vizibile</div>
       <!-- FGB layer -->
       <div class="lrow">
         <div class="ldot" style="background:#FF00FF"></div>
@@ -220,7 +225,15 @@ html,body{ height:100%; overflow:hidden; font-family:'SF Pro Text','Segoe UI',sy
     </div>
 
     <div class="sec">
-      <div class="sec-label">Ajutor</div>
+      <div class="sec-label">Corecție proiecție</div>
+      <p style="font-size:11px;color:var(--text2);line-height:1.5;margin-bottom:8px">
+        Dacă entitățile sunt deplasate față de hartă, încearcă parametrii alternativi:
+      </p>
+      <div style="display:flex;gap:6px">
+        <button class="mapbtn active" id="proj-std" onclick="setProj('EPSG:3844')">Standard</button>
+        <button class="mapbtn" id="proj-alt" onclick="setProj('EPSG:3844B')">Alternativ</button>
+      </div>
+    </div>
       <p style="font-size:11px;color:var(--text2);line-height:1.7">
         1. Apasă 📍 pentru GPS<br>
         2. Setează raza (implicit 100m)<br>
@@ -259,12 +272,20 @@ const CFG = {
 };
 
 // ── PROJ4 — Stereo70 ↔ WGS84 ────────────────────────────────────────────────
+// Parametrii towgs84 oficiali EPSG:3844 pentru România
 proj4.defs('EPSG:3844',
   '+proj=sterea +lat_0=46 +lon_0=25 +k=0.9996 +x_0=500000 +y_0=500000' +
   ' +ellps=krass +towgs84=28,-121,-77,0,0,0,0 +units=m +no_defs');
 
-function wgs84To3844(lat, lon) { return proj4('EPSG:4326','EPSG:3844',[lon,lat]); }
-function xy2ll(x, y) { const [ln,la]=proj4('EPSG:3844','EPSG:4326',[+x,+y]); return [la,ln]; }
+// Parametrii alternativi mai precisi (folosiți de unele surse cadastrale RO)
+proj4.defs('EPSG:3844B',
+  '+proj=sterea +lat_0=46 +lon_0=25 +k=0.9996 +x_0=500000 +y_0=500000' +
+  ' +ellps=krass +towgs84=33.4,-146.6,-76.3,-0.359,-0.053,0.844,-0.84 +units=m +no_defs');
+
+let currentProj = 'EPSG:3844'; // schimbă în 3844B dacă e offset
+
+function wgs84To3844(lat, lon) { return proj4('EPSG:4326', currentProj, [lon,lat]); }
+function xy2ll(x, y) { const [ln,la]=proj4(currentProj,'EPSG:4326',[+x,+y]); return [la,ln]; }
 
 function geomToLL(geom) {
   const cvt = r => r.map(([x,y])=>xy2ll(x,y));
@@ -291,30 +312,34 @@ const fgbGroup = L.featureGroup();
 // ── MAP ───────────────────────────────────────────────────────────────────────
 const map = L.map('map',{zoomControl:false}).setView([44.9,24.3],13);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{
-  attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:22, maxNativeZoom:19
-}).addTo(map);
+// ── BASE LAYERS ───────────────────────────────────────────────────────────────
+const baseLayers = {
+  carto: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{
+    attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:22, maxNativeZoom:19
+  }),
+  sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+    attribution:'© Esri, Maxar, Earthstar Geographics', maxZoom:22, maxNativeZoom:19
+  }),
+  osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'© OpenStreetMap', maxZoom:22, maxNativeZoom:19
+  }),
+};
+baseLayers.carto.addTo(map);
+let currentBase = 'carto';
 
-L.control.zoom({position:'bottomright'}).addTo(map);
-
-// ── WMS LAYER prin worker (adaugă Referer corect) ────────────────────────────
-const WORKER = 'https://eterra-worker.dobriflor-proj.workers.dev';
-const ARCGIS_BASE = 'https://geoportal.ancpi.ro/maps/rest/services/eterra3_publish/MapServer';
-
-const wmsLayer = L.tileLayer(
-  WORKER + '/map-tile?z={z}&x={x}&y={y}', {
-  opacity: 0.75, maxZoom: 22, tileSize: 256,
-  attribution: '© ANCPI eTerra',
-}).addTo(map);
+function setBaseMap(name) {
+  if (name === currentBase) return;
+  map.removeLayer(baseLayers[currentBase]);
+  baseLayers[name].addTo(map);
+  baseLayers[name].bringToBack();
+  currentBase = name;
+  document.querySelectorAll('.mapbtn').forEach(b => b.classList.toggle('active', b.dataset.map === name));
+}
 
 fgbGroup.addTo(map);
+L.control.zoom({position:'bottomright'}).addTo(map);
 
-let wmsOn=true, fgbOn=true;
-function toggleWms() {
-  wmsOn=!wmsOn;
-  wmsOn ? wmsLayer.addTo(map) : map.removeLayer(wmsLayer);
-  document.getElementById('tog-wms').classList.toggle('on',wmsOn);
-}
+let fgbOn=true;
 function toggleFgb() {
   fgbOn=!fgbOn;
   fgbOn ? fgbGroup.addTo(map) : map.removeLayer(fgbGroup);
@@ -329,7 +354,27 @@ function showLoad(m)  { const el=document.getElementById('loading'); el.textCont
 function hideLoad()   { document.getElementById('loading').style.display='none'; }
 function updateBadge(){ const n=sel.size,b=document.getElementById('sbadge'); b.textContent=n+' sel.'; b.style.display=n?'inline':'none'; document.getElementById('btn-exp-sel').disabled=n===0; }
 
-// ── GPS ───────────────────────────────────────────────────────────────────────
+function setProj(name) {
+  currentProj = name;
+  document.getElementById('proj-std').classList.toggle('active', name==='EPSG:3844');
+  document.getElementById('proj-alt').classList.toggle('active', name==='EPSG:3844B');
+  // Redraw all loaded features with new projection
+  fgbGroup.clearLayers();
+  allFeats.forEach(feat => {
+    const latlngs = geomToLL(feat.geom);
+    if (!latlngs) return;
+    const isLine = feat.geom.type==='LineString'||feat.geom.type==='MultiLineString';
+    const ll = isLine
+      ? L.polyline(latlngs,{color:FGB_COLOR,weight:2})
+      : L.polygon(latlngs,{color:FGB_COLOR,fillColor:FGB_COLOR,fillOpacity:.2,weight:1.5});
+    feat.leafletLayer = ll;
+    ll.on('click',e=>{L.DomEvent.stopPropagation(e);toggleSel(feat);});
+    fgbGroup.addLayer(ll);
+  });
+  setStatus(`Proiecție: ${name === 'EPSG:3844' ? 'standard' : 'alternativă'} — ${allFeats.length} entități redesenate`);
+}
+
+
 function locateMe() {
   if (!navigator.geolocation) { showManual('GPS indisponibil în browser.'); return; }
   setStatus('⏳ Localizare GPS...');
@@ -462,11 +507,21 @@ function buildDxf(feats) {
 
 function downloadDxf(text, name) {
   if (!text) { setStatus('⚠ Nimic de exportat'); return; }
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([text],{type:'application/dxf'}));
-  a.download=name;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
+  try {
+    // Method 1: Blob URL (desktop + Android Chrome)
+    const blob = new Blob([text], {type:'application/octet-stream'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
+    setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  } catch(e) {
+    // Method 2: data URI fallback
+    const uri = 'data:application/octet-stream;charset=utf-8,' + encodeURIComponent(text);
+    window.open(uri, '_blank');
+  }
 }
 function exportSelected() {
   const feats=allFeats.filter(f=>sel.has(f.uid));
